@@ -3,31 +3,39 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	api "github.com/Lev2307/urlCutter/internal/api"
+	config "github.com/Lev2307/urlCutter/internal/config"
+	"github.com/joho/godotenv"
 )
 
-const defaultAddr string = ":8080"
-
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	_ = godotenv.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config error: %v", err)
+	}
+
+	// создание нового экзмепляра логгера + установка уровня лога
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	srv := api.NewServer()
 	httpSrv := &http.Server{
-		Addr:              defaultAddr,
+		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),
-		ReadTimeout:       5 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		IdleTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 	}
 
 	srvErr := make(chan error, 1)
@@ -38,22 +46,22 @@ func main() {
 	select {
 	case err := <-srvErr:
 		if !errors.Is(err, http.ErrServerClosed) {
-			log.Error("server error", "error", err)
+			logger.Error("server error", "error", err)
 		}
 		return
 	case <-ctx.Done():
 	}
 
-	log.Info("shutting down successfully...")
+	logger.Info("shutting down successfully...")
 
-	shutDownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutDownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := httpSrv.Shutdown(shutDownCtx); err != nil {
-		log.Error("server forced to shutdown", "error", err)
+		logger.Error("server forced to shutdown", "error", err)
 	}
 
-	log.Info("Server stopped cleanly...")
+	logger.Info("Server stopped cleanly...")
 }
 
 /*
