@@ -15,6 +15,7 @@ type Config struct {
 	ReadHeaderTimeout time.Duration
 	ShutdownTimeout   time.Duration
 	LogLevel          slog.Level
+	DBName            string
 }
 
 func getString(key, def string) string {
@@ -66,6 +67,7 @@ func Load() (Config, error) {
 	if err := lvl.UnmarshalText([]byte(getString("LOG_LEVEL", "INFO"))); err != nil {
 		return Config{}, fmt.Errorf("LOG_LEVEL: %w", err)
 	}
+
 	return Config{
 		Port:              getString("PORT", "8080"),
 		ReadTimeout:       readTm,
@@ -74,5 +76,6 @@ func Load() (Config, error) {
 		ReadHeaderTimeout: readHeaderTm,
 		ShutdownTimeout:   shutDownTm,
 		LogLevel:          lvl,
+		DBName:            getString("DB_NAME", "default.db"),
 	}, nil
 }

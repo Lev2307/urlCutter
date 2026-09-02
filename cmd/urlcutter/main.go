@@ -12,6 +12,7 @@ import (
 
 	api "github.com/Lev2307/urlCutter/internal/api"
 	config "github.com/Lev2307/urlCutter/internal/config"
+	db "github.com/Lev2307/urlCutter/internal/db"
 	"github.com/joho/godotenv"
 )
 
@@ -28,7 +29,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := api.NewServer()
+	dbPool, err := db.NewDatabase(ctx, cfg.DBName)
+	if err != nil {
+		logger.Error("open db pool", "error", err)
+		return
+	}
+	defer dbPool.Close()
+
+	storage := db.NewSQLiteStorage(dbPool)
+
+	srv := api.NewServer(storage, logger)
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),
