@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	model "github.com/Lev2307/urlCutter/internal/model"
 	sqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -34,12 +35,25 @@ func isUniqueViolation(err error) bool {
 
 func initDB(ctx context.Context, db *sql.DB) error {
 	schema := `
-	CREATE TABLE IF NOT EXISTS links (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT NOT NULL, 
-		code TEXT NOT NULL UNIQUE
+	CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY,
+		username TEXT NOT NULL UNIQUE,
+		email TEXT,
+		passwordHash TEXT NOT NULL,
+		createdAt DATETIME NOT NULL
 	);
-	`
+	CREATE TABLE IF NOT EXISTS links (
+		id INTEGER PRIMARY KEY,
+		title TEXT,
+		originalUrl TEXT NOT NULL, 
+		code TEXT NOT NULL UNIQUE,
+		createdAt DATETIME NOT NULL,
+		validTill DATETIME,
+		clicks INTEGER NOT NULL DEFAULT 0,
+		userID INTEGER REFERENCES users(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_links_userID_title ON links(userID, title);
+	` // title - я сделал unique для отдельного юзера: title может повторяться у множества юзеров, но title у одного пользователя должен быть уникальным
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
@@ -47,7 +61,7 @@ func initDB(ctx context.Context, db *sql.DB) error {
 }
 
 func NewDatabase(ctx context.Context, path string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)&_time_format=datetime&_timezone=UTC", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("create db conn: %w", err)
@@ -70,22 +84,22 @@ func NewSQLiteStorage(db *sql.DB) *SQLiteStorage {
 	return &SQLiteStorage{db: db}
 }
 
-func (strg *SQLiteStorage) CreateLink(ctx context.Context, linkName string) (string, error) {
+func (strg *SQLiteStorage) CreateLink(ctx context.Context, link model.Link) (model.Link, error) {
 	query := `
-		INSERT INTO links (name, code) VALUES (?, ?)
-		RETURNING code;
+		INSERT INTO links (title, originalUrl, code, createdAt, validTill) VALUES (?, ?, ?, ?, ?)
+		RETURNING id, title, originalUrl, code, createdAt, validTill, clicks;
 	`
 	const maxAttempts = 5
 	for range maxAttempts { // попытки на генерацию уникального кода
-		var code string
-		err := strg.db.QueryRowContext(ctx, query, linkName, newCode()).Scan(&code)
+		var out model.Link
+		err := strg.db.QueryRowContext(ctx, query, link.Title, link.OriginalUrl, newCode(), link.CreatedAt, link.ValidTill).Scan(&out.ID, &out.Title, &out.OriginalUrl, &out.Code, &out.CreatedAt, &out.ValidTill, &out.Clicks) // database/sql - сам делает разыменовывание указателей
 		if err == nil {
-			return code, nil
+			return out, nil
 		}
 		if isUniqueViolation(err) { // проверка на уже существующую запись в таблице links с таким же code
 			continue
 		}
-		return "", fmt.Errorf("create link: %w", err)
+		return model.Link{}, fmt.Errorf("create link: %w", err)
 	}
-	return "", fmt.Errorf("create link: не удалось подобрать код за %d попыток", maxAttempts)
+	return model.Link{}, fmt.Errorf("create link: Unable to find the code after %d attempts", maxAttempts)
 }
