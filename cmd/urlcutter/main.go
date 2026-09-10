@@ -38,7 +38,7 @@ func main() {
 
 	storage := db.NewSQLiteStorage(dbPool)
 
-	srv := api.NewServer(storage, logger)
+	srv := api.NewServer(storage, logger, cfg)
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),

@@ -16,6 +16,7 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	LogLevel          slog.Level
 	DBName            string
+	HostNameURL       string
 }
 
 func getString(key, def string) string {
@@ -77,5 +78,6 @@ func Load() (Config, error) {
 		ShutdownTimeout:   shutDownTm,
 		LogLevel:          lvl,
 		DBName:            getString("DB_NAME", "default.db"),
+		HostNameURL:       getString("HOSTNAME_URL", "localhost"),
 	}, nil
 }

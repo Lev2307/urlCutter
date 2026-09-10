@@ -13,6 +13,8 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
+var ErrCodeTaken = errors.New("url shorten code was already taken")
+
 type SQLiteStorage struct {
 	db *sql.DB
 }
@@ -101,5 +103,5 @@ func (strg *SQLiteStorage) CreateLink(ctx context.Context, link model.Link) (mod
 		}
 		return model.Link{}, fmt.Errorf("create link: %w", err)
 	}
-	return model.Link{}, fmt.Errorf("create link: Unable to find the code after %d attempts", maxAttempts)
+	return model.Link{}, ErrCodeTaken
 }

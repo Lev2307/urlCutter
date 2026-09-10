@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Lev2307/urlCutter/internal/config"
 	db "github.com/Lev2307/urlCutter/internal/db"
 	model "github.com/Lev2307/urlCutter/internal/model"
 )
@@ -30,7 +31,7 @@ func TestCreatingLinkHandler(t *testing.T) {
 
 	storage := newTestStore(t)
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := NewServer(storage, logger)
+	srv := NewServer(storage, logger, config.Config{})
 
 	tit := "new link for twitter"
 	link := model.Link{
