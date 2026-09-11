@@ -12,6 +12,8 @@ import (
 	model "github.com/Lev2307/urlCutter/internal/model"
 )
 
+const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
 var ErrInvalidURL = errors.New("invalid url")
 var ErrLengthURL = errors.New("link length is gt 2048 symbols")
 
@@ -109,4 +111,33 @@ func (srv *Server) HandleCreateLink(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(crLink)
+}
+
+func (srv *Server) HandleRedirectLink(w http.ResponseWriter, r *http.Request) {
+	// проверка валидности code
+	code := r.PathValue("code")
+	if len(code) != 8 {
+		http.Error(w, "link length should equal 8", http.StatusNotFound)
+		return
+	}
+	for _, run := range code {
+		if !strings.Contains(base64Alphabet, string(run)) {
+			http.Error(w, "invalid code", http.StatusNotFound)
+			return
+		}
+	}
+
+	link, err := srv.storage.GetLinkByCode(r.Context(), code)
+	if err != nil {
+		if errors.Is(err, db.ErrLinkNotFound) {
+			http.Error(w, db.ErrLinkNotFound.Error(), http.StatusNotFound)
+			return
+		}
+		srv.logger.Error("get link by code", "err", err.Error())
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, link.OriginalUrl, http.StatusFound)
 }

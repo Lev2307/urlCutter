@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"time"
 
 	model "github.com/Lev2307/urlCutter/internal/model"
 	sqlite "modernc.org/sqlite"
@@ -14,6 +15,7 @@ import (
 )
 
 var ErrCodeTaken = errors.New("url shorten code was already taken")
+var ErrLinkNotFound = errors.New("link not found")
 
 type SQLiteStorage struct {
 	db *sql.DB
@@ -104,4 +106,22 @@ func (strg *SQLiteStorage) CreateLink(ctx context.Context, link model.Link) (mod
 		return model.Link{}, fmt.Errorf("create link: %w", err)
 	}
 	return model.Link{}, ErrCodeTaken
+}
+
+func (strg *SQLiteStorage) GetLinkByCode(ctx context.Context, code string) (model.Link, error) {
+	var foundLink model.Link
+	queryFindLink := `
+	UPDATE links
+	SET clicks = clicks + 1
+	WHERE code = ? AND (validTill IS NULL OR validTill > ?)
+	RETURNING id, title, originalUrl, code, createdAt, validTill, clicks, userID;
+	`
+	if err := strg.db.QueryRowContext(ctx, queryFindLink, code, time.Now().UTC()).Scan(&foundLink.ID, &foundLink.Title, &foundLink.OriginalUrl, &foundLink.Code, &foundLink.CreatedAt, &foundLink.ValidTill, &foundLink.Clicks, &foundLink.UserID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.Link{}, ErrLinkNotFound
+		}
+		return model.Link{}, fmt.Errorf("make query GetLinkByCode: %w", err)
+	}
+
+	return foundLink, nil
 }

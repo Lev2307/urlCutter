@@ -22,6 +22,7 @@ func (srv *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", srv.HandleServerStartPoint)
-	mux.HandleFunc("POST /", srv.HandleCreateLink)
+	mux.HandleFunc("POST /api/links", srv.HandleCreateLink)
+	mux.HandleFunc("GET /{code}", srv.HandleRedirectLink) // также есть HEAD: это тот же GET, только без тела
 	return mux
 }
