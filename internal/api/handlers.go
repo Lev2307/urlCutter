@@ -139,5 +139,10 @@ func (srv *Server) HandleRedirectLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
+	// http.HandlerFunc() Смысл ровно один: заставить обычную функцию удовлетворять интерфейсу Handler.
 	http.Redirect(w, r, link.OriginalUrl, http.StatusFound)
+}
+
+func (srv *Server) HandlePanic(w http.ResponseWriter, r *http.Request) {
+	panic(1)
 }

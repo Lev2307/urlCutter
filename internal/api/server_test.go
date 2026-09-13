@@ -104,7 +104,7 @@ func TestRedirectByCodeHandlerWrongCode(t *testing.T) {
 	routes := srv.Routes()
 	rLength := httptest.NewRequest(http.MethodGet, "/"+wrongCodeLength, nil)
 	wLength := httptest.NewRecorder()
-	routes.ServeHTTP(wLength, rLength)
+	routes.ServeHTTP(wLength, rLength) // serveHTTP - фундамент всей вэб сервреной экосистемы. Он обработывает входящий HTTP-запрос и формирует ответ, который отправляется обратно клиенту
 	if wLength.Code != http.StatusNotFound {
 		t.Errorf("status: wanted %d, got %d, body: %s", http.StatusNotFound, wLength.Code, wLength.Body.String())
 	}
