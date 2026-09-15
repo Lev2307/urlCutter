@@ -26,7 +26,10 @@ func (srv *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /{code}", srv.HandleRedirectLink) // также есть HEAD: это тот же GET, только без тела
 	mux.HandleFunc("GET /panic", srv.HandlePanic)
 
-	return ChainMiddleware(mux, srv.RequestIDMiddleware, srv.RecoverMiddleware)
+	return ChainMiddleware(mux, srv.RequestIDMiddleware, srv.LoggingMiddleware, srv.RecoverMiddleware)
+	//	- RequestID снаружи — он кладёт логгер с rid в контекст, и всем, кто ниже, он нужен уже готовым.
+	//	- Logging в середине — создаёт обёртку и переживает возврат Recover, поэтому видит в логе и упавшие запросы тоже.
+	//	- Recover внутри — ловит панику хендлера и пишет свои 500 через обёртку, которую ему передал Logging. Значит, флаг HeaderGone работает, и лог покажет реальный статус.
 }
 
 // контекст - односвязанный список. Начало - context.Background()
