@@ -58,7 +58,13 @@ func (srv *Server) HandleCreateLink(w http.ResponseWriter, r *http.Request) {
 		ValidTill   *time.Time `json:"validTill"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
-		srv.logger.Error("reading input json", "err", err)
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			srv.log(r).Warn("request body size", "limit", maxBytesError.Limit, "status", http.StatusRequestEntityTooLarge)
+			http.Error(w, "request body size is larger than 1 mb", http.StatusRequestEntityTooLarge)
+			return
+		}
+		srv.log(r).Warn("reading input json", "err", err)
 		http.Error(w, "Invalid json", http.StatusBadRequest)
 		return
 	}
@@ -68,7 +74,7 @@ func (srv *Server) HandleCreateLink(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidURL):
-			srv.logger.Error("invalid url", "url", requestBody.OriginalUrl)
+			srv.log(r).Warn("invalid url", "url", requestBody.OriginalUrl)
 			http.Error(w, "invalid url", http.StatusBadRequest)
 			return
 		case errors.Is(err, ErrLengthURL):
@@ -84,7 +90,7 @@ func (srv *Server) HandleCreateLink(w http.ResponseWriter, r *http.Request) {
 	if requestBody.ValidTill != nil {
 		validT := *requestBody.ValidTill
 		if validT.Before(nowUTC) {
-			srv.logger.Error("valid till date is outdated", "validTill", validT, "datetime now", nowUTC)
+			srv.log(r).Warn("valid till date is outdated", "validTill", validT, "datetime now", nowUTC)
 			http.Error(w, "valid till datetime is outdated", http.StatusBadRequest)
 			return
 		}
@@ -103,7 +109,7 @@ func (srv *Server) HandleCreateLink(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, db.ErrCodeTaken.Error(), http.StatusInternalServerError)
 			return
 		default:
-			srv.logger.Error("create link", "error", err)
+			srv.log(r).Error("create link", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -117,11 +123,13 @@ func (srv *Server) HandleRedirectLink(w http.ResponseWriter, r *http.Request) {
 	// проверка валидности code
 	code := r.PathValue("code")
 	if len(code) != 8 {
+		srv.log(r).Warn("invalid code length")
 		http.Error(w, "link length should equal 8", http.StatusNotFound)
 		return
 	}
 	for _, run := range code {
 		if !strings.Contains(base64Alphabet, string(run)) {
+			srv.log(r).Warn("inapropriate symbol in url", "symb", string(run))
 			http.Error(w, "invalid code", http.StatusNotFound)
 			return
 		}
@@ -133,11 +141,10 @@ func (srv *Server) HandleRedirectLink(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, db.ErrLinkNotFound.Error(), http.StatusNotFound)
 			return
 		}
-		srv.logger.Error("get link by code", "err", err.Error())
+		srv.log(r).Error("get link by code", "err", err.Error())
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-
 	w.Header().Set("Cache-Control", "no-store")
 	// http.HandlerFunc() Смысл ровно один: заставить обычную функцию удовлетворять интерфейсу Handler.
 	http.Redirect(w, r, link.OriginalUrl, http.StatusFound)

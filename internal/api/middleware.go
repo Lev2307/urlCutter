@@ -23,24 +23,20 @@ func newID() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func loggerFrom(ctx context.Context) *slog.Logger {
-	lg, ok := ctx.Value(loggerKey{}).(*slog.Logger)
-	if !ok {
-		return slog.Default()
-	}
-	return lg
-}
-
-func requestIDFrom(ctx context.Context) string {
-	id, _ := ctx.Value(requestIDKey{}).(string)
-	return id
-}
-
 func ChainMiddleware(h http.Handler, mws ...Middleware) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {
 		h = mws[i](h) // mws[i] - функция удовл типу Middleware, например, func Logging(next http.Handler) http.Handler{}
 	}
 	return h
+}
+
+func MaxBytesMiddleware(n int64) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, n)
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // Надевается последним = оказывается снаружи = выполняется первым.
@@ -79,11 +75,19 @@ func (rww *ResponseWriterWrapper) Unwrap() http.ResponseWriter {
 	return rww.ResponseWriter
 }
 
+func (srv *Server) log(r *http.Request) *slog.Logger { // метод для получения экземпляра логгера с полем - id запроса
+	lg, ok := r.Context().Value(loggerKey{}).(*slog.Logger)
+	if !ok {
+		return srv.logger
+	}
+	return lg
+}
+
 func (srv *Server) RecoverMiddleware(next http.Handler) http.Handler { // Recover — страховочная сетка под багами, о которых не было предусмотрено. Он отдаёт именно 500, потому что что конкретно сломалось — неизвестно.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				lg := loggerFrom(r.Context())
+				lg := srv.log(r)
 				lg.Error("PANIC RECOVERED", "err", err, "stack", string(debug.Stack()))
 				w.WriteHeader(http.StatusInternalServerError)
 			}
@@ -110,7 +114,7 @@ func (srv *Server) LoggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rww, r)
 
 		lvl := slog.LevelInfo
-		logger := loggerFrom(r.Context())
+		logger := srv.log(r)
 		if rww.StatusCode >= 500 {
 			lvl = slog.LevelError
 		}
@@ -118,7 +122,7 @@ func (srv *Server) LoggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// пример работы middleware-ов на хэндлере /api/links
+// пример работы middleware-ов на хэндлере /api/links (дальше уже добавляются новые хэндлеры -> схема поменяется)
 //Q (RequestID):  id, логгер в ctx, X-Request-Id
 //  L (Logging):  start := time.Now(); rww := &ResponseWriterWrapper{...}
 //    R (Recover): поставил defer
