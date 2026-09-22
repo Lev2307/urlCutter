@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -17,6 +18,9 @@ type Config struct {
 	LogLevel          slog.Level
 	DBName            string
 	HostNameURL       string
+	RateLimitRPS      float64
+	RateLimitBurst    float64
+	RateLimitTTL      time.Duration
 }
 
 func getString(key, def string) string {
@@ -24,6 +28,18 @@ func getString(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func getFloat(key string, def float64) (float64, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def, nil
+	}
+	fl, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return fl, nil
 }
 
 func getDuration(key string, def time.Duration) (time.Duration, error) {
@@ -69,6 +85,18 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("LOG_LEVEL: %w", err)
 	}
 
+	rlRPS, err := getFloat("RATE_LIMIT_RPS", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	rlBurst, err := getFloat("RATE_LIMIT_BURST", 20)
+	if err != nil {
+		return Config{}, err
+	}
+	rlTTL, err := getDuration("RATE_LIMIT_TTL", 60*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		Port:              getString("PORT", "8080"),
 		ReadTimeout:       readTm,
@@ -79,5 +107,8 @@ func Load() (Config, error) {
 		LogLevel:          lvl,
 		DBName:            getString("DB_NAME", "default.db"),
 		HostNameURL:       getString("HOSTNAME_URL", "localhost"),
+		RateLimitRPS:      rlRPS,
+		RateLimitBurst:    rlBurst,
+		RateLimitTTL:      rlTTL,
 	}, nil
 }

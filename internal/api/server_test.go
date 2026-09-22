@@ -50,7 +50,7 @@ func TestCreatingLinkHandler(t *testing.T) {
 
 	storage := newTestStore(t)
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := NewServer(storage, logger, config.Config{})
+	srv := NewServer(storage, logger, config.Config{}, nil)
 
 	tit := "new link for twitter"
 	inputLink := model.Link{
@@ -70,7 +70,7 @@ func TestRedirectByCodeHandler(t *testing.T) {
 	storage := newTestStore(t)
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := NewServer(storage, logger, config.Config{})
+	srv := NewServer(storage, logger, config.Config{}, nil)
 
 	tit := "insta kai angel"
 	inputLink := model.Link{
@@ -99,7 +99,7 @@ func TestRedirectByCodeHandlerWrongCode(t *testing.T) {
 
 	storage := newTestStore(t)
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := NewServer(storage, logger, config.Config{})
+	srv := NewServer(storage, logger, config.Config{}, nil)
 
 	routes := srv.Routes()
 	rLength := httptest.NewRequest(http.MethodGet, "/"+wrongCodeLength, nil)

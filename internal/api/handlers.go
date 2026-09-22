@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	db "github.com/Lev2307/urlCutter/internal/db"
 	model "github.com/Lev2307/urlCutter/internal/model"
@@ -16,6 +17,7 @@ const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123
 
 var ErrInvalidURL = errors.New("invalid url")
 var ErrLengthURL = errors.New("link length is gt 2048 symbols")
+var ErrLengthTitle = errors.New("title length is gt 64 symbols")
 
 func normalizeUrl(raw, ownHost string) (string, error) {
 	raw = strings.TrimSpace(raw)
@@ -57,20 +59,26 @@ func (srv *Server) HandleCreateLink(w http.ResponseWriter, r *http.Request) {
 		Title       *string    `json:"title"`
 		ValidTill   *time.Time `json:"validTill"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
 			srv.log(r).Warn("request body size", "limit", maxBytesError.Limit, "status", http.StatusRequestEntityTooLarge)
-			http.Error(w, "request body size is larger than 1 mb", http.StatusRequestEntityTooLarge)
+			http.Error(w, "request body size is larger than 8kb", http.StatusRequestEntityTooLarge)
 			return
 		}
 		srv.log(r).Warn("reading input json", "err", err)
 		http.Error(w, "Invalid json", http.StatusBadRequest)
 		return
 	}
+
+	if requestBody.Title != nil && utf8.RuneCountInString(*requestBody.Title) > 64 {
+		srv.log(r).Warn("request data - field title", "err", ErrLengthTitle.Error())
+		http.Error(w, ErrLengthTitle.Error(), http.StatusBadRequest)
+		return
+	}
 	// проверка валидности URL
 	normalizedOriginalUrl, err := normalizeUrl(requestBody.OriginalUrl, hostNameURL)
-
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidURL):
@@ -148,8 +156,4 @@ func (srv *Server) HandleRedirectLink(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	// http.HandlerFunc() Смысл ровно один: заставить обычную функцию удовлетворять интерфейсу Handler.
 	http.Redirect(w, r, link.OriginalUrl, http.StatusFound)
-}
-
-func (srv *Server) HandlePanic(w http.ResponseWriter, r *http.Request) {
-	panic(1)
 }

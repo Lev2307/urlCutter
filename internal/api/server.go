@@ -12,12 +12,13 @@ type Server struct {
 	storage *db.SQLiteStorage
 	logger  *slog.Logger
 	cfg     config.Config
+	limiter *RateLimiter
 }
 
 const maxRequestBodyBytes = 8 << 10
 
-func NewServer(store *db.SQLiteStorage, logger *slog.Logger, cfg config.Config) *Server {
-	return &Server{storage: store, logger: logger, cfg: cfg}
+func NewServer(store *db.SQLiteStorage, logger *slog.Logger, cfg config.Config, limiter *RateLimiter) *Server {
+	return &Server{storage: store, logger: logger, cfg: cfg, limiter: limiter}
 }
 
 func (srv *Server) Routes() http.Handler {
@@ -25,18 +26,21 @@ func (srv *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /healthz", srv.HandleServerStartPoint)
 	mux.HandleFunc("POST /api/links", srv.HandleCreateLink)
-	mux.HandleFunc("GET /api/{code}", srv.HandleRedirectLink) // также есть HEAD: это тот же GET, только без тела
-	mux.HandleFunc("GET /panic", srv.HandlePanic)
+	mux.HandleFunc("GET /{code}", srv.HandleRedirectLink) // также есть HEAD: это тот же GET, только без тела
 
 	return ChainMiddleware(
 		mux,
 		srv.RequestIDMiddleware,
 		MaxBytesMiddleware(maxRequestBodyBytes),
 		srv.LoggingMiddleware,
+		srv.RateLimitMiddleware,
 		srv.RecoverMiddleware,
 	)
 	//	- RequestID снаружи — он кладёт логгер с rid в контекст, и всем, кто ниже, он нужен уже готовым.
+	//	- MaxBytes сразу под ним — подменяет r.Body раньше, чем его кто-либо успеет прочитать.
 	//	- Logging в середине — создаёт обёртку и переживает возврат Recover, поэтому видит в логе и упавшие запросы тоже.
+	//	- RateLimit под Logging — тогда отказы 429 пишутся в лог наравне с обычными ответами и с тем же rid. Снаружи логгера они стали бы невидимыми, а именно их и надо видеть.
+	//	  Главное в нём — return сразу после http.Error: отклонённый запрос не должен дойти ни до мукса, ни до базы, иначе дорогая работа всё равно выполнится, а статус 429 останется просто украшением.
 	//	- Recover внутри — ловит панику хендлера и пишет свои 500 через обёртку, которую ему передал Logging. Значит, флаг HeaderGone работает, и лог покажет реальный статус.
 }
 

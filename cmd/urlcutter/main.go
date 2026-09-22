@@ -38,7 +38,9 @@ func main() {
 
 	storage := db.NewSQLiteStorage(dbPool)
 
-	srv := api.NewServer(storage, logger, cfg)
+	limiter := api.NewRateLimiter(ctx, cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.RateLimitTTL, nil)
+
+	srv := api.NewServer(storage, logger, cfg, limiter)
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),

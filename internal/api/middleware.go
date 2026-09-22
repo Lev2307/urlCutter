@@ -7,8 +7,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"log/slog"
+	"math"
+	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"time"
 )
 
@@ -119,6 +122,26 @@ func (srv *Server) LoggingMiddleware(next http.Handler) http.Handler {
 			lvl = slog.LevelError
 		}
 		logger.Log(r.Context(), lvl, "request", "method", r.Method, "path", r.URL.Path, slog.Int("status", rww.StatusCode), "bytes", rww.BytesWrittenLength, "duration", time.Since(now).String())
+	})
+}
+
+func (srv *Server) RateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if srv.limiter == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		allowedFlag, wait := srv.limiter.allow(host)
+		if !allowedFlag {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds())))) // math.Ceil - округление вверх
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
