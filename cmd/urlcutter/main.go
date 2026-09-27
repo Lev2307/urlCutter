@@ -40,7 +40,11 @@ func main() {
 
 	limiter := api.NewRateLimiter(ctx, cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.RateLimitTTL, nil)
 
-	srv := api.NewServer(storage, logger, cfg, limiter)
+	srv, err := api.NewServer(storage, logger, cfg, limiter)
+	if err != nil {
+		logger.Error("create server instance", "err", err)
+		return
+	}
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),

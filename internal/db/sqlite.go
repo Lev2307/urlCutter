@@ -15,7 +15,10 @@ import (
 )
 
 var ErrCodeTaken = errors.New("url shorten code was already taken")
+var ErrUserExists = errors.New("user with such username already exists")
+var ErrUserNotFound = errors.New("user not found")
 var ErrLinkNotFound = errors.New("link not found")
+var ErrTokenExists = errors.New("token already exists")
 
 type SQLiteStorage struct {
 	db *sql.DB
@@ -43,9 +46,18 @@ func initDB(ctx context.Context, db *sql.DB) error {
 		id INTEGER PRIMARY KEY,
 		username TEXT NOT NULL UNIQUE,
 		email TEXT,
-		passwordHash TEXT NOT NULL,
-		createdAt DATETIME NOT NULL
+		createdAt DATETIME NOT NULL,
+		passwordHash TEXT NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS tokens (
+		id INTEGER PRIMARY KEY,
+		userID INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		tokenHash TEXT NOT NULL UNIQUE,
+		createdAt DATETIME NOT NULL,
+		expiresAt DATETIME NOT NULL
+	);
+
 	CREATE TABLE IF NOT EXISTS links (
 		id INTEGER PRIMARY KEY,
 		title TEXT,
@@ -54,7 +66,7 @@ func initDB(ctx context.Context, db *sql.DB) error {
 		createdAt DATETIME NOT NULL,
 		validTill DATETIME,
 		clicks INTEGER NOT NULL DEFAULT 0,
-		userID INTEGER REFERENCES users(id) ON DELETE CASCADE
+		userID INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE
 	);
 	CREATE INDEX IF NOT EXISTS idx_links_userID_title ON links(userID, title);
 	` // title - я сделал unique для отдельного юзера: title может повторяться у множества юзеров, но title у одного пользователя должен быть уникальным
@@ -124,4 +136,48 @@ func (strg *SQLiteStorage) GetLinkByCode(ctx context.Context, code string) (mode
 	}
 
 	return foundLink, nil
+}
+
+func (strg *SQLiteStorage) CreateUser(ctx context.Context, user model.User) (model.User, error) {
+	query := `
+		INSERT INTO users (username, email, createdAt, passwordHash) VALUES (?, ?, ?, ?)
+		RETURNING id, username, email, createdAt;
+		`
+	var crUser model.User
+	if err := strg.db.QueryRowContext(ctx, query, user.Username, user.Email, user.CreatedAt, user.PasswordHash).Scan(&crUser.ID, &crUser.Username, &crUser.Email, &crUser.CreatedAt); err != nil {
+		if isUniqueViolation(err) { // проверка на уникальность пользователя
+			return model.User{}, ErrUserExists
+		}
+		return model.User{}, fmt.Errorf("create user: %w", err)
+	}
+	return crUser, nil
+}
+
+func (strg *SQLiteStorage) GetUserByUsername(ctx context.Context, username string) (model.LoginUser, error) {
+	query := `
+		SELECT id, passwordHash FROM users WHERE username=?;
+	`
+	var loginUser model.LoginUser
+	if err := strg.db.QueryRowContext(ctx, query, username).Scan(&loginUser.ID, &loginUser.PasswordHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.LoginUser{}, ErrUserNotFound
+		}
+		return model.LoginUser{}, fmt.Errorf("failed to get user by username: %w", err)
+	}
+	return loginUser, nil
+}
+
+func (strg *SQLiteStorage) CreateToken(ctx context.Context, token model.Token) (model.Token, error) {
+	query := `
+		INSERT INTO tokens (userID, tokenHash, createdAt, expiresAt) VALUES (?, ?, ?, ?)
+		RETURNING id, userID, tokenHash, createdAt, expiresAt;
+	`
+	var crToken model.Token
+	if err := strg.db.QueryRowContext(ctx, query, token.UserID, token.TokenHash, token.CreatedAt, token.ExpiresAt).Scan(&crToken.ID, &crToken.UserID, &crToken.TokenHash, &crToken.CreatedAt, &crToken.ExpiresAt); err != nil {
+		if isUniqueViolation(err) {
+			return model.Token{}, ErrTokenExists
+		}
+		return model.Token{}, fmt.Errorf("create token: %w", err)
+	}
+	return crToken, nil
 }

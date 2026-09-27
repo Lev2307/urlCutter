@@ -122,7 +122,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	ip := "203.0.113.7:4242"
 	rl := NewRateLimiter(ctx, rps, burst, 60*time.Second, func() time.Time { return t0 })
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := NewServer(nil, logger, config.Config{}, rl)
+	srv, _ := NewServer(nil, logger, config.Config{}, rl)
 	handler := srv.Routes()
 
 	// первый запрос

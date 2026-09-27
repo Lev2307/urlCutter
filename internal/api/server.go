@@ -6,19 +6,25 @@ import (
 
 	"github.com/Lev2307/urlCutter/internal/config"
 	db "github.com/Lev2307/urlCutter/internal/db"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Server struct {
-	storage *db.SQLiteStorage
-	logger  *slog.Logger
-	cfg     config.Config
-	limiter *RateLimiter
+	storage   *db.SQLiteStorage
+	logger    *slog.Logger
+	cfg       config.Config
+	limiter   *RateLimiter
+	dummyHash []byte
 }
 
 const maxRequestBodyBytes = 8 << 10
 
-func NewServer(store *db.SQLiteStorage, logger *slog.Logger, cfg config.Config, limiter *RateLimiter) *Server {
-	return &Server{storage: store, logger: logger, cfg: cfg, limiter: limiter}
+func NewServer(store *db.SQLiteStorage, logger *slog.Logger, cfg config.Config, limiter *RateLimiter) (*Server, error) {
+	dummyHash, err := bcrypt.GenerateFromPassword([]byte("dummy-password"), bcrypt.DefaultCost)
+	if err != nil {
+		return &Server{}, err
+	}
+	return &Server{storage: store, logger: logger, cfg: cfg, limiter: limiter, dummyHash: dummyHash}, nil
 }
 
 func (srv *Server) Routes() http.Handler {
@@ -27,6 +33,8 @@ func (srv *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", srv.HandleServerStartPoint)
 	mux.HandleFunc("POST /api/links", srv.HandleCreateLink)
 	mux.HandleFunc("GET /{code}", srv.HandleRedirectLink) // также есть HEAD: это тот же GET, только без тела
+	mux.HandleFunc("POST /api/auth/register", srv.HandleRegister)
+	mux.HandleFunc("POST /api/auth/login", srv.HandleLogin)
 
 	return ChainMiddleware(
 		mux,

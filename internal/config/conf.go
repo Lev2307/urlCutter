@@ -21,6 +21,7 @@ type Config struct {
 	RateLimitRPS      float64
 	RateLimitBurst    float64
 	RateLimitTTL      time.Duration
+	TokenTTL          time.Duration
 }
 
 func getString(key, def string) string {
@@ -97,6 +98,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+
+	tkTTL, err := getDuration("TOKEN_TTL", 168*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		Port:              getString("PORT", "8080"),
 		ReadTimeout:       readTm,
@@ -110,5 +116,6 @@ func Load() (Config, error) {
 		RateLimitRPS:      rlRPS,
 		RateLimitBurst:    rlBurst,
 		RateLimitTTL:      rlTTL,
+		TokenTTL:          tkTTL,
 	}, nil
 }
