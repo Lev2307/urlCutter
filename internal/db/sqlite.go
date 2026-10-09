@@ -17,8 +17,10 @@ import (
 var ErrCodeTaken = errors.New("url shorten code was already taken")
 var ErrUserExists = errors.New("user with such username already exists")
 var ErrUserNotFound = errors.New("user not found")
+var ErrTokenNotFound = errors.New("token not found")
 var ErrLinkNotFound = errors.New("link not found")
 var ErrTokenExists = errors.New("token already exists")
+var ErrLinkAccessForbidden = errors.New("link author name not match current user")
 
 type SQLiteStorage struct {
 	db *sql.DB
@@ -102,13 +104,13 @@ func NewSQLiteStorage(db *sql.DB) *SQLiteStorage {
 
 func (strg *SQLiteStorage) CreateLink(ctx context.Context, link model.Link) (model.Link, error) {
 	query := `
-		INSERT INTO links (title, originalUrl, code, createdAt, validTill) VALUES (?, ?, ?, ?, ?)
-		RETURNING id, title, originalUrl, code, createdAt, validTill, clicks;
+		INSERT INTO links (title, originalUrl, code, createdAt, validTill, userID) VALUES (?, ?, ?, ?, ?, ?)
+		RETURNING id, title, originalUrl, code, createdAt, validTill, clicks, userID;
 	`
 	const maxAttempts = 5
 	for range maxAttempts { // попытки на генерацию уникального кода
 		var out model.Link
-		err := strg.db.QueryRowContext(ctx, query, link.Title, link.OriginalUrl, newCode(), link.CreatedAt, link.ValidTill).Scan(&out.ID, &out.Title, &out.OriginalUrl, &out.Code, &out.CreatedAt, &out.ValidTill, &out.Clicks) // database/sql - сам делает разыменовывание указателей
+		err := strg.db.QueryRowContext(ctx, query, link.Title, link.OriginalUrl, newCode(), link.CreatedAt, link.ValidTill, link.UserID).Scan(&out.ID, &out.Title, &out.OriginalUrl, &out.Code, &out.CreatedAt, &out.ValidTill, &out.Clicks, &out.UserID) // database/sql - сам делает разыменовывание указателей
 		if err == nil {
 			return out, nil
 		}
@@ -180,4 +182,70 @@ func (strg *SQLiteStorage) CreateToken(ctx context.Context, token model.Token) (
 		return model.Token{}, fmt.Errorf("create token: %w", err)
 	}
 	return crToken, nil
+}
+
+func (strg *SQLiteStorage) GetTokenByHash(ctx context.Context, hash string) (model.TokenInfo, error) {
+	query := `SELECT userID, expiresAt FROM tokens WHERE tokenHash=?`
+	var foundTk model.TokenInfo
+	if err := strg.db.QueryRowContext(ctx, query, hash).Scan(&foundTk.UserID, &foundTk.ExpiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.TokenInfo{}, ErrTokenNotFound
+		}
+		return model.TokenInfo{}, fmt.Errorf("failed to get token by hash: %w", err)
+	}
+	return foundTk, nil
+}
+
+func (strg *SQLiteStorage) GetLinksByUserID(ctx context.Context, userID int64, limit, offset int) ([]model.Link, error) {
+	links := make([]model.Link, 0)
+	query := `SELECT id, title, originalUrl, code, createdAt, validTill, clicks, userID FROM links WHERE userID = ? ORDER BY id DESC LIMIT ? OFFSET ?`
+	rows, err := strg.db.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return links, fmt.Errorf("get links by user: failed to get links by userID: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var lk model.Link
+		if err := rows.Scan(&lk.ID, &lk.Title, &lk.OriginalUrl, &lk.Code, &lk.CreatedAt, &lk.ValidTill, &lk.Clicks, &lk.UserID); err != nil {
+			return nil, fmt.Errorf("get links by user: failed to get link: %w", err)
+		}
+		links = append(links, lk)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get links by user: iterate rows: %w", err)
+	}
+	return links, nil
+}
+
+func (strg *SQLiteStorage) DeleteUserLink(ctx context.Context, userID int64, code string) error {
+	tx, err := strg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete link: failed to open tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var foundUserID int64
+	queryFindLink := `SELECT userID FROM links WHERE code=?`
+	if err := tx.QueryRowContext(ctx, queryFindLink, code).Scan(&foundUserID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrLinkNotFound
+		}
+		return fmt.Errorf("delete link: failed to find link by code: %w", err)
+	}
+
+	if foundUserID != userID {
+		return ErrLinkAccessForbidden
+	}
+
+	queryDeleteLink := `DELETE FROM links WHERE code=? AND userID=?`
+
+	if _, err := tx.ExecContext(ctx, queryDeleteLink, code, userID); err != nil {
+		return fmt.Errorf("delete link: failed to exec delete query: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete link: failed to commit query affection: %w", err)
+	}
+	return nil
 }

@@ -10,16 +10,21 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	db "github.com/Lev2307/urlCutter/internal/db"
+	strg "github.com/Lev2307/urlCutter/internal/db"
 	model "github.com/Lev2307/urlCutter/internal/model"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+const defaultLinksLimitPagination = 20
+const defaultLinksOffsetPagination = 0
+const maxLinksLimit = 100
 
 var ErrInvalidURL = errors.New("invalid url")
 var ErrLengthURL = errors.New("link length is gt 2048 symbols")
@@ -29,6 +34,11 @@ func generateToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func hashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }
 
 func normalizeUrl(raw, ownHost string) (string, error) {
@@ -52,6 +62,10 @@ func normalizeUrl(raw, ownHost string) (string, error) {
 	}
 
 	if strings.ToLower(parsedUrl.Hostname()) == ownHost {
+		return "", ErrInvalidURL
+	}
+
+	if strings.Count(parsedUrl.Hostname(), ".") < 1 {
 		return "", ErrInvalidURL
 	}
 
@@ -116,11 +130,19 @@ func (srv *Server) HandleCreateLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	userID, ok := authUserIDFromContext(r.Context())
+	if !ok {
+		srv.log(r).Error("userID missing in context: route not wrapped in AuthMiddleware?")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	link := model.Link{
 		Title:       requestBody.Title,
 		OriginalUrl: normalizedOriginalUrl,
 		ValidTill:   requestBody.ValidTill,
 		CreatedAt:   nowUTC,
+		UserID:      userID,
 	}
 	crLink, err := srv.storage.CreateLink(r.Context(), link)
 	if err != nil {
@@ -330,12 +352,11 @@ func (srv *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := generateToken()
-	h := sha256.Sum256([]byte(token))
-	hashToken := hex.EncodeToString(h[:])
+	hToken := hashToken(token)
 
 	var startToken model.Token
 	startToken.UserID = lgUser.ID
-	startToken.TokenHash = hashToken
+	startToken.TokenHash = hToken
 	startToken.CreatedAt = time.Now().UTC()
 	startToken.ExpiresAt = time.Now().UTC().Add(srv.cfg.TokenTTL)
 
@@ -359,4 +380,102 @@ func (srv *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(output)
+}
+
+func (srv *Server) HandleListLinks(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authUserIDFromContext(r.Context())
+	if !ok {
+		srv.log(r).Error("userID missing in context: route not wrapped in AuthMiddleware?")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	limit := r.URL.Query().Get("limit")
+	offset := r.URL.Query().Get("offset")
+
+	limitAtoi := defaultLinksLimitPagination
+	offsetAtoi := defaultLinksOffsetPagination
+
+	// проверка limit
+	if limit != "" {
+		lm, err := strconv.Atoi(limit)
+		if err != nil {
+			srv.log(r).Warn("failed to parse limit query", "err", err)
+			http.Error(w, "bad limit query", http.StatusBadRequest)
+			return
+		}
+		if lm <= 0 {
+			srv.log(r).Warn("limit query should be gt 0")
+			http.Error(w, "limit query should be gt 0", http.StatusBadRequest)
+			return
+		}
+		if lm > maxLinksLimit {
+			lm = maxLinksLimit
+		}
+		limitAtoi = lm
+	}
+
+	// проверка offset
+	if offset != "" {
+		off, err := strconv.Atoi(offset)
+		if err != nil {
+			srv.log(r).Warn("failed to parse offset query", "err", err)
+			http.Error(w, "bad offset query", http.StatusBadRequest)
+			return
+		}
+		if off < 0 {
+			srv.log(r).Warn("offset must not be negative")
+			http.Error(w, "offset must not be negative", http.StatusBadRequest)
+			return
+		}
+		offsetAtoi = off
+	}
+
+	links, err := srv.storage.GetLinksByUserID(r.Context(), userID, limitAtoi, offsetAtoi)
+	if err != nil {
+		srv.log(r).Error("failed to get links", "err", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	var Response struct {
+		Links  []model.Link `json:"links"`
+		Limit  int          `json:"limit"`
+		Offset int          `json:"offset"`
+	}
+	Response.Links = links
+	Response.Limit = limitAtoi
+	Response.Offset = offsetAtoi
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(Response)
+}
+
+func (srv *Server) HandleDeleteLink(w http.ResponseWriter, r *http.Request) {
+	userIDsession, ok := authUserIDFromContext(r.Context())
+	if !ok {
+		srv.log(r).Error("userID missing in context: route not wrapped in AuthMiddleware?")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	code := r.PathValue("code")
+
+	err := srv.storage.DeleteUserLink(r.Context(), userIDsession, code)
+	if err != nil {
+		if errors.Is(err, strg.ErrLinkNotFound) {
+			srv.log(r).Warn("link not found", "code", code)
+			http.Error(w, "link not found", http.StatusNotFound)
+			return
+		} else if errors.Is(err, strg.ErrLinkAccessForbidden) {
+			srv.log(r).Warn("link not accessible to delete", "code", code)
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		srv.log(r).Error("error proccessing link destroy", "err", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

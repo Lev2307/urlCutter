@@ -31,7 +31,10 @@ func (srv *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", srv.HandleServerStartPoint)
-	mux.HandleFunc("POST /api/links", srv.HandleCreateLink)
+	// mux.HandleFunc("POST /api/links", srv.HandleCreateLink)
+	mux.Handle("POST /api/links", srv.AuthMiddleware(http.HandlerFunc(srv.HandleCreateLink))) // - http.HandlerFunc тк мидлвэйр принимает http.Handler
+	mux.Handle("GET /api/links", srv.AuthMiddleware(http.HandlerFunc(srv.HandleListLinks)))
+	mux.Handle("DELETE /api/links/{code}", srv.AuthMiddleware(http.HandlerFunc(srv.HandleDeleteLink)))
 	mux.HandleFunc("GET /{code}", srv.HandleRedirectLink) // также есть HEAD: это тот же GET, только без тела
 	mux.HandleFunc("POST /api/auth/register", srv.HandleRegister)
 	mux.HandleFunc("POST /api/auth/login", srv.HandleLogin)

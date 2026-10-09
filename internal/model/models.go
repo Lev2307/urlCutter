@@ -33,3 +33,8 @@ type Token struct {
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
 }
+
+type TokenInfo struct {
+	UserID    int64     `json:"userID"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}

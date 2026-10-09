@@ -6,19 +6,24 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"math"
 	"net"
 	"net/http"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
+
+	strg "github.com/Lev2307/urlCutter/internal/db"
 )
 
 type Middleware func(http.Handler) http.Handler
 
 type loggerKey struct{}
 type requestIDKey struct{}
+type userIDKey struct{}
 
 func newID() string {
 	b := make([]byte, 6) // 3 байта - 4 символа -> 6 байт - 8 символов
@@ -141,6 +146,49 @@ func (srv *Server) RateLimitMiddleware(next http.Handler) http.Handler {
 			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func authUserIDFromContext(ctx context.Context) (int64, bool) {
+	userID, ok := ctx.Value(userIDKey{}).(int64)
+	return userID, ok
+}
+
+func (srv *Server) AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		authToken, ok := strings.CutPrefix(authHeader, "Bearer ")
+		if !ok {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+		hToken := hashToken(authToken)
+		foundTk, err := srv.storage.GetTokenByHash(r.Context(), hToken)
+		if err != nil {
+			if errors.Is(err, strg.ErrTokenNotFound) {
+				srv.log(r).Warn("invalid or expired token", "err", err)
+				w.Header().Set("WWW-Authenticate", "Bearer")
+				http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+				return
+			}
+			srv.log(r).Error("failed to get auth token", "err", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// проверка просроченности токена
+		if time.Now().After(foundTk.ExpiresAt) {
+			srv.log(r).Warn("token was expired")
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+		lg := srv.log(r).With("userID", foundTk.UserID)
+		ctx := context.WithValue(r.Context(), loggerKey{}, lg)
+		ctx = context.WithValue(ctx, userIDKey{}, foundTk.UserID)
+		r = r.WithContext(ctx)
 		next.ServeHTTP(w, r)
 	})
 }
