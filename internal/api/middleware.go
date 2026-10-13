@@ -24,6 +24,7 @@ type Middleware func(http.Handler) http.Handler
 type loggerKey struct{}
 type requestIDKey struct{}
 type userIDKey struct{}
+type tokenIDKey struct{}
 
 func newID() string {
 	b := make([]byte, 6) // 3 байта - 4 символа -> 6 байт - 8 символов
@@ -155,6 +156,11 @@ func authUserIDFromContext(ctx context.Context) (int64, bool) {
 	return userID, ok
 }
 
+func authTokenIDFromContext(ctx context.Context) (int64, bool) {
+	tokenID, ok := ctx.Value(tokenIDKey{}).(int64)
+	return tokenID, ok
+}
+
 func (srv *Server) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -187,6 +193,7 @@ func (srv *Server) AuthMiddleware(next http.Handler) http.Handler {
 		}
 		lg := srv.log(r).With("userID", foundTk.UserID)
 		ctx := context.WithValue(r.Context(), loggerKey{}, lg)
+		ctx = context.WithValue(ctx, tokenIDKey{}, foundTk.ID)
 		ctx = context.WithValue(ctx, userIDKey{}, foundTk.UserID)
 		r = r.WithContext(ctx)
 		next.ServeHTTP(w, r)

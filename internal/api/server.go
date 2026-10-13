@@ -38,6 +38,7 @@ func (srv *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /{code}", srv.HandleRedirectLink) // также есть HEAD: это тот же GET, только без тела
 	mux.HandleFunc("POST /api/auth/register", srv.HandleRegister)
 	mux.HandleFunc("POST /api/auth/login", srv.HandleLogin)
+	mux.Handle("POST /api/auth/logout", srv.AuthMiddleware(http.HandlerFunc(srv.HandleLogout)))
 
 	return ChainMiddleware(
 		mux,

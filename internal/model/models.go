@@ -35,6 +35,7 @@ type Token struct {
 }
 
 type TokenInfo struct {
+	ID        int64     `json:"id"`
 	UserID    int64     `json:"userID"`
 	ExpiresAt time.Time `json:"expiresAt"`
 }

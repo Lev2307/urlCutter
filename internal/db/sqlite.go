@@ -185,9 +185,9 @@ func (strg *SQLiteStorage) CreateToken(ctx context.Context, token model.Token) (
 }
 
 func (strg *SQLiteStorage) GetTokenByHash(ctx context.Context, hash string) (model.TokenInfo, error) {
-	query := `SELECT userID, expiresAt FROM tokens WHERE tokenHash=?`
+	query := `SELECT id, userID, expiresAt FROM tokens WHERE tokenHash=?`
 	var foundTk model.TokenInfo
-	if err := strg.db.QueryRowContext(ctx, query, hash).Scan(&foundTk.UserID, &foundTk.ExpiresAt); err != nil {
+	if err := strg.db.QueryRowContext(ctx, query, hash).Scan(&foundTk.ID, &foundTk.UserID, &foundTk.ExpiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return model.TokenInfo{}, ErrTokenNotFound
 		}
@@ -246,6 +246,22 @@ func (strg *SQLiteStorage) DeleteUserLink(ctx context.Context, userID int64, cod
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("delete link: failed to commit query affection: %w", err)
+	}
+	return nil
+}
+
+func (strg *SQLiteStorage) DeleteToken(ctx context.Context, tokenID, userID int64) error {
+	query := "DELETE FROM tokens WHERE id=? AND userID=?"
+	res, err := strg.db.ExecContext(ctx, query, tokenID, userID)
+	if err != nil {
+		return fmt.Errorf("delete token: exec query: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete token: rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrTokenNotFound
 	}
 	return nil
 }

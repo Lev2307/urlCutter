@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+const UnAuthorizedStatusErrorMessage = "invalid username or password"
 const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 const defaultLinksLimitPagination = 20
 const defaultLinksOffsetPagination = 0
@@ -322,7 +323,7 @@ func (srv *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if len(rbody.Password) > 72 {
 		srv.log(r).Warn("login: password too long")
-		http.Error(w, "invalid username or password", http.StatusUnauthorized)
+		http.Error(w, UnAuthorizedStatusErrorMessage, http.StatusUnauthorized)
 		return
 	}
 
@@ -332,8 +333,8 @@ func (srv *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			// пустой вызов CompareHashAndPassword для того, чтобы замедлить скорость получения ответа: без неё вместо 50мс, было 5мс. Что легко опреедляло где неверный пароль, а где нет пользователя с таким именем
 			_ = bcrypt.CompareHashAndPassword(srv.dummyHash, []byte(rbody.Password))
 
-			srv.log(r).Warn("invalid username or password", "username", rbody.Username)
-			http.Error(w, "invalid username or password", http.StatusUnauthorized)
+			srv.log(r).Warn(UnAuthorizedStatusErrorMessage, "username", rbody.Username)
+			http.Error(w, UnAuthorizedStatusErrorMessage, http.StatusUnauthorized)
 			return
 		}
 		srv.log(r).Error("failed to get user by username", "err", err)
@@ -343,7 +344,7 @@ func (srv *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if err := bcrypt.CompareHashAndPassword([]byte(lgUser.PasswordHash), []byte(rbody.Password)); err != nil {
 		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-			http.Error(w, "invalid username or password", http.StatusUnauthorized)
+			http.Error(w, UnAuthorizedStatusErrorMessage, http.StatusUnauthorized)
 			return
 		}
 		srv.log(r).Error("corrupted hash")
@@ -474,6 +475,33 @@ func (srv *Server) HandleDeleteLink(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		srv.log(r).Error("error proccessing link destroy", "err", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (srv *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	tokenID, ok := authTokenIDFromContext(r.Context())
+	if !ok {
+		srv.log(r).Error("tokenID missing in context: route not wrapped in AuthMiddleware?")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	userID, ok := authUserIDFromContext(r.Context())
+	if !ok {
+		srv.log(r).Error("userID missing in context: route not wrapped in AuthMiddleware?")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := srv.storage.DeleteToken(r.Context(), tokenID, userID); err != nil {
+		if errors.Is(err, strg.ErrTokenNotFound) {
+			srv.log(r).Info("token already revoked", "tokenID", tokenID)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		srv.log(r).Error("delete token", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
