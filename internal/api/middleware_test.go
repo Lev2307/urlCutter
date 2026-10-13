@@ -1,65 +1,13 @@
 package api
 
 import (
-	"context"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/Lev2307/urlCutter/internal/config"
-	strg "github.com/Lev2307/urlCutter/internal/db"
-	"github.com/Lev2307/urlCutter/internal/model"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const DefaultPasswordForTests = "dummy-password"
-
-func newServerHelper(t *testing.T, storage *strg.SQLiteStorage) *Server {
-	t.Helper()
-	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv, err := NewServer(storage, logger, config.Config{TokenTTL: time.Hour * 168}, nil)
-	if err != nil {
-		t.Fatalf("mdlwr test helpers: failed to init server: %v", err)
-	}
-	return srv
-}
-
-func createUser(t *testing.T, storage *strg.SQLiteStorage, username, password string) model.User {
-	t.Helper()
-
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("create user helper: generate hash: %v", err)
-	}
-	testUser := model.User{
-		Username:     username,
-		CreatedAt:    time.Now(),
-		PasswordHash: string(passwordHash),
-	}
-	crUser, err := storage.CreateUser(context.TODO(), testUser)
-	if err != nil {
-		t.Fatalf("create user helper: create user in db: %v", err)
-	}
-	return crUser
-}
-
-func createToken(t *testing.T, storage *strg.SQLiteStorage, userID int64, tkHash string, timeExpires time.Time) model.Token {
-	t.Helper()
-	tkData := model.Token{
-		UserID:    userID,
-		TokenHash: tkHash,
-		CreatedAt: time.Now(),
-		ExpiresAt: timeExpires,
-	}
-	crToken, err := storage.CreateToken(context.TODO(), tkData)
-	if err != nil {
-		t.Fatalf("mdlwr test helpers: create token - %v", err)
-	}
-	return crToken
-}
 
 func TestAuthMiddlewareNoHeader(t *testing.T) {
 	storage := newTestStore(t)

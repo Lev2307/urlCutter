@@ -1,106 +1,21 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Lev2307/urlCutter/internal/config"
-	db "github.com/Lev2307/urlCutter/internal/db"
 	model "github.com/Lev2307/urlCutter/internal/model"
 )
 
-func newTestStore(t *testing.T) *db.SQLiteStorage {
-	t.Helper()
-
-	dbNew, err := db.NewDatabase(context.Background(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("New database: %v", err)
-	}
-	t.Cleanup(func() { dbNew.Close() })
-	return db.NewSQLiteStorage(dbNew)
-}
-
-func newTestUser(t *testing.T, strg *db.SQLiteStorage, username string) string { // возвращает токен
-	t.Helper()
-	user := model.User{
-		Username:     username,
-		CreatedAt:    time.Now().UTC(),
-		PasswordHash: "hashpasswordtest",
-	}
-
-	crUser, err := strg.CreateUser(context.Background(), user)
-	if err != nil {
-		t.Fatalf("failed to create user: %v", err)
-	}
-
-	genToken := generateToken()
-	hToken := hashToken(genToken)
-	tk := model.Token{
-		UserID:    crUser.ID,
-		TokenHash: hToken,
-		CreatedAt: time.Now().UTC(),
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
-	}
-
-	if _, err := strg.CreateToken(context.Background(), tk); err != nil {
-		t.Fatalf("failed to create token: %v", err)
-	}
-	return genToken
-}
-
-func createLinkResponse(t *testing.T, srv *Server, inputLink model.Link, token string) model.Link {
-	t.Helper()
-	jsonData, err := json.Marshal(inputLink)
-	if err != nil {
-		t.Fatalf("failed to encode json: %v", err)
-	}
-	handler := srv.Routes() // изменил с прямого вызова хэндлера на Mux
-	req := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/links", bytes.NewBuffer(jsonData))
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status: wanted %d, got %d, body: %s", http.StatusCreated, w.Code, w.Body.String())
-	}
-	var newLink model.Link
-	if err := json.Unmarshal(w.Body.Bytes(), &newLink); err != nil {
-		t.Fatalf("failed to encode json: %v", err)
-	}
-	return newLink
-}
-
-func loginRequest(t *testing.T, srv *Server, username, password string) *httptest.ResponseRecorder {
-	t.Helper()
-	var loginBody struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	loginBody.Username = username
-	loginBody.Password = password
-
-	jsonData, err := json.Marshal(loginBody)
-	if err != nil {
-		t.Fatalf("login handler: failed to serialize data: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBuffer(jsonData))
-	w := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(w, req)
-
-	return w
-}
 func TestLinkCreatingHandler(t *testing.T) {
 	storage := newTestStore(t)
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
@@ -452,18 +367,14 @@ func TestLinkListHandler(t *testing.T) {
 			t.Errorf("link list: status wanted - %d, got - %d", http.StatusOK, w.Code)
 		}
 
-		var response struct {
-			Links  []model.Link `json:"links"`
-			Limit  int          `json:"limit"`
-			Offset int          `json:"offset"`
-		}
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		// декодируем не в структуру, а в "сырые" куски JSON: так видно, что именно лежит в поле links - [] или null
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(w.Body).Decode(&raw); err != nil {
 			t.Fatalf("link list: failed to get json data from response: %v", err)
 		}
 
-		empty := make([]model.Link, 0)
-		if !slices.Equal(response.Links, empty) {
-			t.Errorf("link list: links count wanted - %v, got - %v", empty, response.Links)
+		if got := string(raw["links"]); got != "[]" {
+			t.Errorf("link list: links wanted %q, got %q", "[]", got)
 		}
 	})
 
@@ -527,5 +438,3 @@ func TestLinkListHandler(t *testing.T) {
 		}
 	})
 }
-
-// сокет по-простому - это сетевое соединение, работающее как файл через который перекидываются байты через два буфера. А буфер сам по себе - это место, где эти байты хранятся для обработки.
